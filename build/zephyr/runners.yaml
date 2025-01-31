@@ -1,0 +1,32 @@
+# Available runners configured by board.cmake.
+runners:
+- openocd
+
+# Default flash runner if --runner is not given.
+flash-runner: openocd
+
+# Default debug runner if --runner is not given.
+debug-runner: openocd
+
+# Common runner configuration values.
+config:
+  board_dir: /home/a-fleloir/zephyrproject/zephyr/boards/phytec/phyboard_lyra
+  # Build outputs:
+  elf_file: zephyr_openamp_rsc_table.elf
+  # Host tools:
+  gdb: /home/a-fleloir/zephyr-sdk-0.17.0/arm-zephyr-eabi/bin/arm-zephyr-eabi-gdb-py
+  openocd: /home/a-fleloir/zephyr-sdk-0.17.0/sysroots/x86_64-pokysdk-linux/usr/bin/openocd
+  openocd_search:
+    - /home/a-fleloir/zephyr-sdk-0.17.0/sysroots/x86_64-pokysdk-linux/usr/share/openocd/scripts
+
+# Runner specific arguments
+args:
+  openocd:
+    - --cmd-load
+    - flash write_image erase
+    - --cmd-verify
+    - verify_image
+    - --no-init
+    - --no-halt
+    - --no-targets
+    - --gdb-client-port=3339

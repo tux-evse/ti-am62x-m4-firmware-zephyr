@@ -1,0 +1,141 @@
+/dts-v1/;
+
+/ {
+	#address-cells = < 0x1 >;
+	#size-cells = < 0x1 >;
+	model = "PHYTEC phyBOARD-Lyra AM62x M4";
+	compatible = "phytec,phyboard-lyra-am62xx-m4", "ti,am625";
+	chosen {
+		zephyr,sram = &sram0;
+		zephyr,console = &uart0;
+		zephyr,shell-uart = &uart0;
+		zephyr,sram1 = &ddr0;
+		zephyr,ipc_shm = &mcu_m4fss_dma_memory_region;
+		zephyr,ipc = &mbox0;
+	};
+	aliases {
+		led0 = &heartbeat_led;
+	};
+	soc {
+		#address-cells = < 0x1 >;
+		#size-cells = < 0x1 >;
+		compatible = "simple-bus";
+		interrupt-parent = < &nvic >;
+		ranges;
+		nvic: interrupt-controller@e000e100 {
+			#address-cells = < 0x1 >;
+			compatible = "arm,v7m-nvic";
+			reg = < 0xe000e100 0xc00 >;
+			interrupt-controller;
+			#interrupt-cells = < 0x2 >;
+			arm,num-irq-priority-bits = < 0x3 >;
+			phandle = < 0x1 >;
+		};
+		systick: timer@e000e010 {
+			compatible = "arm,armv7m-systick";
+			reg = < 0xe000e010 0x10 >;
+			status = "okay";
+		};
+	};
+	cpus {
+		#address-cells = < 0x1 >;
+		#size-cells = < 0x0 >;
+		cpu0: cpu@0 {
+			device_type = "cpu";
+			compatible = "arm,cortex-m4f";
+			reg = < 0x0 >;
+			status = "okay";
+			clock-frequency = < 0x17d78400 >;
+		};
+	};
+	sram0: memory@0 {
+		compatible = "mmio-sram";
+		reg = < 0x0 0x30000 >;
+	};
+	sram1: memory1@40000 {
+		compatible = "mmio-sram";
+		reg = < 0x40000 0x10000 >;
+	};
+	sysclk: system-clock {
+		compatible = "fixed-clock";
+		clock-frequency = < 0x17d78400 >;
+		#clock-cells = < 0x0 >;
+	};
+	mbox0: mailbox0@A9000000 {
+		compatible = "ti,omap-mailbox";
+		reg = < 0xa9000000 0x200 >;
+		interrupts = < 0x32 0x4 >;
+		interrupt-parent = < &nvic >;
+		usr-id = < 0x2 >;
+		#mbox-cells = < 0x1 >;
+		status = "okay";
+		phandle = < 0x5 >;
+	};
+	pinctrl: pinctrl@4084000 {
+		compatible = "ti,k3-pinctrl";
+		reg = < 0x4084000 0x88 >;
+		status = "okay";
+		mcu_uart0_rx_default: mcu_uart0_rx_default {
+			pinmux = < 0x14 0x50000 >;
+			phandle = < 0x2 >;
+		};
+		mcu_uart0_tx_default: mcu_uart0_tx_default {
+			pinmux = < 0x18 0x10000 >;
+			phandle = < 0x3 >;
+		};
+		mcu_gpio0_led_default: mcu_gpio0_led_default {
+			pinmux = < 0x0 0x10007 >;
+			phandle = < 0x4 >;
+		};
+	};
+	uart0: serial@4a00000 {
+		compatible = "ns16550";
+		reg = < 0x4a00000 0x200 >;
+		interrupts = < 0x18 0x4 >;
+		interrupt-parent = < &nvic >;
+		clock-frequency = < 0x2dc6c00 >;
+		current-speed = < 0x1c200 >;
+		reg-shift = < 0x2 >;
+		status = "okay";
+		pinctrl-0 = < &mcu_uart0_rx_default &mcu_uart0_tx_default >;
+		pinctrl-names = "default";
+	};
+	gpio0: gpio@4201010 {
+		compatible = "ti,davinci-gpio";
+		reg = < 0x4201010 0x100 >;
+		gpio-controller;
+		#gpio-cells = < 0x2 >;
+		ngpios = < 0x18 >;
+		status = "okay";
+		pinctrl-0 = < &mcu_gpio0_led_default >;
+		pinctrl-names = "default";
+		phandle = < 0x6 >;
+	};
+	ddr0: memory@9CC00000 {
+		compatible = "zephyr,memory-region", "mmio-sram";
+		reg = < 0x9cc00000 0x1000 >;
+		zephyr,memory-region = "DDR";
+	};
+	reserved-memory {
+		#address-cells = < 0x1 >;
+		#size-cells = < 0x1 >;
+		ranges;
+		mcu_m4fss_dma_memory_region: memory@9cb00000 {
+			compatible = "shared-dma-pool";
+			reg = < 0x9cb00000 0x100000 >;
+			no-map;
+		};
+	};
+	mbox-consumer {
+		compatible = "vnd,mbox-consumer";
+		mboxes = < &mbox0 0x0 >, < &mbox0 0x1 >;
+		mbox-names = "tx", "rx";
+	};
+	leds: leds {
+		compatible = "gpio-leds";
+		heartbeat_led: led_0 {
+			gpios = < &gpio0 0x0 0x0 >;
+			label = "Heartbeat LED";
+		};
+	};
+};

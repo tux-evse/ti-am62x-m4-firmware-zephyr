@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+message Empty {};
+
+// ************************************
+//        Enum declarations 
+// ************************************
+enum PWMState {
+    ON = 0;
+    OFF = 1;
+    F = 2;
+}
+
+enum SLACState {
+	UDF = 0;
+    RUN = 1;
+    OK = 2;
+    NOK = 3;
+}
+
+// ************************************
+//        Messages declarations 
+// ************************************
+message SetPWM {
+	PWMState state = 1;
+	float duty_cycle = 2;	
+}
+
+message SetSLAC {
+	SLACState state = 1; 
+}
+
+message CpuHeartbeat {
+}
+
+
+message HighToLow {
+    // is there any difference between a command, message and event?
+    oneof message {
+        SetPWM set_pwm = 1;
+        bool allow_power_on = 2;
+        Empty enable = 3;
+        Empty disable = 4;
+        CpuHeartbeat heartbeat = 5;
+        SetSLAC set_slac = 6;
+    }
+}
+
+
+

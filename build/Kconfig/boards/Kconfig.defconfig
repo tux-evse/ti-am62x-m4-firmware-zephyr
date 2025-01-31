@@ -1,0 +1,2 @@
+# Load Zephyr board defconfig descriptions.
+osource "/home/a-fleloir/zephyrproject/zephyr/boards/phytec/phyboard_lyra/Kconfig.defconfig"

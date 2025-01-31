@@ -1,0 +1,50 @@
+cmake:
+  application:
+    configuration-dir: /home/a-fleloir/zephyrproject/application_user/openamp_rsc_table
+    source-dir: /home/a-fleloir/zephyrproject/application_user/openamp_rsc_table
+  board:
+    name: phyboard_lyra
+    qualifiers: am6234/m4
+    revision: 
+  devicetree:
+    bindings-dirs:
+     - /home/a-fleloir/zephyrproject/zephyr/dts/bindings
+    files:
+     - /home/a-fleloir/zephyrproject/zephyr/boards/phytec/phyboard_lyra/phyboard_lyra_am6234_m4.dts
+    include-dirs:
+     - /home/a-fleloir/zephyrproject/modules/hal/atmel/include
+     - /home/a-fleloir/zephyrproject/modules/hal/gigadevice/include
+     - /home/a-fleloir/zephyrproject/modules/hal/microchip/dts
+     - /home/a-fleloir/zephyrproject/modules/hal/nuvoton/dts
+     - /home/a-fleloir/zephyrproject/modules/hal/nxp/dts
+     - /home/a-fleloir/zephyrproject/modules/hal/stm32/dts
+     - /home/a-fleloir/zephyrproject/zephyr/include
+     - /home/a-fleloir/zephyrproject/zephyr/include/zephyr
+     - /home/a-fleloir/zephyrproject/zephyr/dts/common
+     - /home/a-fleloir/zephyrproject/zephyr/dts/x86
+     - /home/a-fleloir/zephyrproject/zephyr/dts/xtensa
+     - /home/a-fleloir/zephyrproject/zephyr/dts/sparc
+     - /home/a-fleloir/zephyrproject/zephyr/dts/riscv
+     - /home/a-fleloir/zephyrproject/zephyr/dts/posix
+     - /home/a-fleloir/zephyrproject/zephyr/dts/nios2
+     - /home/a-fleloir/zephyrproject/zephyr/dts/arm64
+     - /home/a-fleloir/zephyrproject/zephyr/dts/arm
+     - /home/a-fleloir/zephyrproject/zephyr/dts/arc
+     - /home/a-fleloir/zephyrproject/zephyr/dts
+  kconfig:
+    files:
+     - /home/a-fleloir/zephyrproject/zephyr/boards/phytec/phyboard_lyra/phyboard_lyra_am6234_m4_defconfig
+     - /home/a-fleloir/zephyrproject/application_user/openamp_rsc_table/prj.conf
+    user-files:
+     - /home/a-fleloir/zephyrproject/application_user/openamp_rsc_table/prj.conf
+  toolchain:
+    name: zephyr
+    path: /home/a-fleloir/zephyr-sdk-0.17.0
+  zephyr:
+    version: 4.0.99
+    zephyr-base: /home/a-fleloir/zephyrproject/zephyr
+version: 0.1.0
+west:
+  command: /home/a-fleloir/zephyrproject/.venv_3.10/bin/west build -p always -b phyboard_lyra/am6234/m4
+  topdir: /home/a-fleloir/zephyrproject
+  version: 1.3.0
