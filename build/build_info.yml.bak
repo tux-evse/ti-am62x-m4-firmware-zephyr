@@ -1,4 +1,0 @@
-west:
-  command: /home/a-fleloir/zephyrproject/.venv_3.10/bin/west build -p always -b phyboard_lyra/am6234/m4
-  topdir: /home/a-fleloir/zephyrproject
-  version: 1.3.0
