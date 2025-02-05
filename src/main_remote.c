@@ -1,8 +1,22 @@
 /*
- * Copyright (c) 2020, STMICROELECTRONICS
+ * Copyright (c) 2025, VALEO
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+
+/* HISTORY:
+---------------------------------------------------------------------------------
+| Version |    Date    | Name |                     Comment                     !
+|---------|------------|------|-------------------------------------------------|
+|   0.1   | 04/02/2025 |  FLE | Initial version: Rpmsg communication between    |
+|         |            |      | Linux [core A53] & M4F firmware [core M4F]      |
+|         |            |      | (use Mailbox driver & Integration of Protobuf   |
+|         |            |      | from freeRTOS).                                 |
+|---------|------------|------|-------------------------------------------------|
+
+*/
+
+
 
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
@@ -23,7 +37,7 @@
 #endif
 
 #include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(openamp_rsc_table, LOG_LEVEL_DBG);
+LOG_MODULE_REGISTER(ti_am62x_m4_firmware, LOG_LEVEL_DBG);
 
 //FLE adding:
 #include "pb_codec/nanopb/pb_decode.h"
@@ -46,16 +60,11 @@ LOG_MODULE_REGISTER(openamp_rsc_table, LOG_LEVEL_DBG);
 
 #define APP_TASK_STACK_SIZE (1024)
 
-/* Add 1024 extra bytes for the TTY task stack for the "tx_buff" buffer. */
-#define APP_TTY_TASK_STACK_SIZE (1536)
-
 K_THREAD_STACK_DEFINE(thread_mng_stack, APP_TASK_STACK_SIZE);
-K_THREAD_STACK_DEFINE(thread_rp__client_stack, APP_TASK_STACK_SIZE);
-K_THREAD_STACK_DEFINE(thread_tty_stack, APP_TTY_TASK_STACK_SIZE);
+K_THREAD_STACK_DEFINE(thread_LinuxMsg_stack, APP_TASK_STACK_SIZE);
 
 static struct k_thread thread_mng_data;
-static struct k_thread thread_rp__client_data;
-static struct k_thread thread_tty_data;
+static struct k_thread thread_LinuxMsg_data;
 
 static const struct device *const ipm_handle =
 	DEVICE_DT_GET(DT_CHOSEN(zephyr_ipc));
@@ -79,69 +88,18 @@ static struct rpmsg_virtio_device rvdev;
 static struct fw_resource_table *rsc_table;
 static struct rpmsg_device *rpdev;
 
-static char rx_sc_msg[20];  /* should receive "Hello world!" */
-static struct rpmsg_endpoint sc_ept;
-static struct rpmsg_rcv_msg sc_msg = {.data = rx_sc_msg};
-
-static struct rpmsg_endpoint tty_ept;
-static struct rpmsg_rcv_msg tty_msg;
-
 static K_SEM_DEFINE(data_sem, 0, 1);
-static K_SEM_DEFINE(data_sc_sem, 0, 1);
-static K_SEM_DEFINE(data_tty_sem, 0, 1);
-
-//FLE: adding:-----
-/* Enum definitions */
-#if 0
-typedef enum _PWMState {
-    PWMState_ON = 0,
-    PWMState_OFF = 1,
-    PWMState_F = 2
-} PWMState;
-
-typedef enum _SLACState {
-    SLACState_UDF = 0,
-    SLACState_RUN = 1,
-    SLACState_OK = 2,
-    SLACState_NOK = 3
-} SLACState;
-
-/* Struct definitions */
-typedef struct _CpuHeartbeat {
-    char dummy_field;
-} CpuHeartbeat;
-
-typedef struct _Empty {
-    char dummy_field;
-} Empty;
-
-typedef struct _SetPWM {
-    PWMState state;
-    float duty_cycle;
-} SetPWM;
-
-typedef struct _SetSLAC {
-    SLACState state;
-} SetSLAC;
-typedef uint_least16_t pb_size_t;
-typedef struct _HighToLow {
-    pb_size_t which_message;
-    union {
-        SetPWM set_pwm;
-        bool allow_power_on;
-        Empty enable;
-        Empty disable;
-        CpuHeartbeat heartbeat;
-        SetSLAC set_slac;
-    } message;
-} HighToLow;
-#endif
-K_THREAD_STACK_DEFINE(thread_LinuxMsg_stack, APP_TASK_STACK_SIZE);
-static struct k_thread thread_LinuxMsg_data;
 static K_SEM_DEFINE(data_linuxmsg_sem, 0, 1);
+
 static struct rpmsg_endpoint linuxmsg_ept;
 
+/* Protobuf buffers */
+static uint8_t msg_buffer[HighToLow_size];
+static struct rpmsg_rcv_msg linuxmsg_msg = {.data = (void*)&msg_buffer};
+static HighToLow rx_linuxmsg_msg;
 
+//FLE: For debugging: adding definition of mailbox registers-------------------------------
+#ifdef DEBUG_SW
 #define OMAP_MAILBOX_NUM_MSGS  16
 #define MAILBOX_MAX_CHANNELS   16
 #define OMAP_MAILBOX_NUM_USERS 4
@@ -167,37 +125,11 @@ struct sMailboxHw {
 	struct omap_mailbox_irq_regs irq_regs[OMAP_MAILBOX_NUM_USERS];
 };
 
-#define NB_MAILBOX_HW_MSG (10) //Messages received from Mailbox Hw
-volatile unsigned int u8HaltCPU;
-volatile unsigned long ClbkCounter = 0L;
-struct fw_rsc_vdev_vring *vring0, *vring1;
 volatile struct sMailboxHw *pMailboxHw; //For debugging: Map structure on Mailbox registers
-uint32_t MailboxHw_Msg_rcv[NB_MAILBOX_HW_MSG];
+#endif
+//-----------------------------------------------------------------------------------------
 
-
-/* Protobuf */
-//#define HighToLow_size  (9)
-uint8_t msg_buffer[HighToLow_size];
-uint16_t msg_buffer_len = sizeof(msg_buffer);
-static struct rpmsg_rcv_msg linuxmsg_msg = {.data = (void*)&msg_buffer};
-HighToLow rx_linuxmsg_msg;
-
-/* PWM */
-float set_pwm_DC_given = 0.05; //to not have 0, which will put fsm into error state
-
-
-
-static void mbox_callback(const struct device *dev, uint32_t channel,
-		     void *user_data, struct mbox_msg *data)
-{
-	if (ClbkCounter < NB_MAILBOX_HW_MSG)
-	{
-		MailboxHw_Msg_rcv[ClbkCounter] = (uint32_t)*(uint32_t*)(data->data); //Msg in Hw Mailbox
-	}
-
-	ClbkCounter++;//For debugging: Update the Interrution counter 
-	k_sem_give(&data_sem);
-}
+//FLE: Exemple to handle incoming linux message--------------------------------------------
 
 /* Field tags (for use in manual encoding/decoding) */
 #define SetPWM_state_tag                         1
@@ -210,6 +142,7 @@ static void mbox_callback(const struct device *dev, uint32_t channel,
 #define HighToLow_heartbeat_tag                  5
 #define HighToLow_set_slac_tag                   6
 
+/* Handle incoming Linux message sent by core A53  */
 void handle_incoming_message(const HighToLow* in) {
     if (in->which_message == HighToLow_set_pwm_tag){
         SetPWM set_pwm = in->message.set_pwm;
@@ -263,44 +196,30 @@ void handle_incoming_message(const HighToLow* in) {
         LOG_INF("Unknown coming message: %d",in->which_message);
     }
 }
+//-----------------------------------------------------------------------------------------
 
-//--------------
-
-static void platform_ipm_callback(const struct device *dev, void *context,
+/*static void platform_ipm_callback(const struct device *dev, void *context,
 				  uint32_t id, volatile void *data)
 {
 	LOG_DBG("%s: msg received from mb %d", __func__, id);
 	k_sem_give(&data_sem);
-}
+}*/
 
-static int rpmsg_recv_cs_callback(struct rpmsg_endpoint *ept, void *data,
-				  size_t len, uint32_t src, void *priv)
+static void mbox_callback(const struct device *dev, uint32_t channel,
+		     void *user_data, struct mbox_msg *data)
 {
-	memcpy(sc_msg.data, data, len);
-	sc_msg.len = len;
-	k_sem_give(&data_sc_sem);
-
-	return RPMSG_SUCCESS;
+	k_sem_give(&data_sem);
 }
-
-static int rpmsg_recv_tty_callback(struct rpmsg_endpoint *ept, void *data,
-				   size_t len, uint32_t src, void *priv)
-{
-	struct rpmsg_rcv_msg *msg = priv;
-
-	rpmsg_hold_rx_buffer(ept, data);
-	msg->data = data;
-	msg->len = len;
-	k_sem_give(&data_tty_sem);
-
-	return RPMSG_SUCCESS;
-}
-
 
 static int rpmsg_recv_linuxmsg_callback(struct rpmsg_endpoint *ept, void *data,
 				  size_t len, uint32_t src, void *priv)
 {
-	//LOG_DBG("%s: Linux msg received !!!", __func__);
+	if (len > (size_t)HighToLow_size)
+	{
+		LOG_ERR("[RPMSG] Linux Message received truncated due to insufficient user buffer size : %d !!!", len);
+		len = (size_t)HighToLow_size;
+	}
+
 	memcpy(linuxmsg_msg.data, data, len);
 	linuxmsg_msg.len = len;
 	k_sem_give(&data_linuxmsg_sem);
@@ -369,18 +288,18 @@ int platform_init(void)
 	//ipm_register_callback(ipm_handle, platform_ipm_callback, NULL); FLE
 	if (mbox_register_callback(ipm_handle, CHANNEL_A53_TO_M4F, mbox_callback, NULL) != 0) //FLE
 	{
-		LOG_ERR("ipm_register_callback failed");
+		LOG_ERR("mbox_register_callback failed");
 	}
 	
-	LOG_DBG("ipm_register_callback OK");
+	LOG_DBG("mbox_register_callback OK");
 
 	//status = ipm_set_enabled(ipm_handle, 1); FLE
 	status = mbox_set_enabled(ipm_handle, CHANNEL_A53_TO_M4F, true); //FLE
 	if (status) {
-		LOG_ERR("ipm_set_enabled failed");
+		LOG_ERR("mbox_set_enabled failed");
 		return -1;
 	}
-	LOG_INF("ipm_set_enabled OK");
+	LOG_INF("mbox_set_enabled OK");
 
 	return 0;
 }
@@ -416,7 +335,7 @@ platform_create_rpmsg_vdev(unsigned int vdev_index,
 	/* wait master rpmsg init completion */
 	rproc_virtio_wait_remote_ready(vdev);
 
-	vring_rsc = vring0 = rsc_table_get_vring0(rsc_table);
+	vring_rsc = rsc_table_get_vring0(rsc_table);
 	ret = rproc_virtio_init_vring(vdev, 0, vring_rsc->notifyid,
 				      (void *)vring_rsc->da, rsc_io,
 				      vring_rsc->num, vring_rsc->align);
@@ -424,9 +343,9 @@ platform_create_rpmsg_vdev(unsigned int vdev_index,
 		LOG_ERR("failed to init vring 0");
 		goto failed;
 	}
-	LOG_INF("Ok to init vring 0: 0x%X",(unsigned int)vring0);
+	LOG_INF("Ok to init vring 0");
 
-	vring_rsc = vring1 = rsc_table_get_vring1(rsc_table);
+	vring_rsc = rsc_table_get_vring1(rsc_table);
 	ret = rproc_virtio_init_vring(vdev, 1, vring_rsc->notifyid,
 				      (void *)vring_rsc->da, rsc_io,
 				      vring_rsc->num, vring_rsc->align);
@@ -434,7 +353,7 @@ platform_create_rpmsg_vdev(unsigned int vdev_index,
 		LOG_ERR("failed to init vring 1");
 		goto failed;
 	}
-	LOG_INF("Ok to init vring 1: 0x%X",(unsigned int)vring1);
+	LOG_INF("Ok to init vring 1");
 
 	ret = rpmsg_init_vdev(&rvdev, vdev, ns_cb, shm_io, NULL);
 	if (ret) {
@@ -451,83 +370,6 @@ failed:
 	return NULL;
 }
 
-void app_rpmsg_client_sample(void *arg1, void *arg2, void *arg3)
-{
-	ARG_UNUSED(arg1);
-	ARG_UNUSED(arg2);
-	ARG_UNUSED(arg3);
-
-	unsigned int msg_cnt = 0;
-	int ret = 0;
-
-	k_sem_take(&data_sc_sem,  K_FOREVER);
-
-	LOG_INF("OpenAMP[remote] Linux sample client responder started");
-
-	ret = rpmsg_create_ept(&sc_ept, rpdev, "rpmsg-client-sample",
-			       RPMSG_ADDR_ANY, RPMSG_ADDR_ANY,
-			       rpmsg_recv_cs_callback, NULL);
-	if (ret) {
-		LOG_ERR("[Linux sample client] Could not create endpoint: %d", ret);
-		goto task_end;
-	}
-	LOG_INF("[Linux sample client] OK to create endpoint");
-
-	while (msg_cnt < 100) {
-		k_sem_take(&data_sc_sem,  K_FOREVER);
-		msg_cnt++;
-		LOG_INF("[Linux sample client] incoming msg %d: %.*s", msg_cnt, sc_msg.len,
-			(char *)sc_msg.data);
-		rpmsg_send(&sc_ept, sc_msg.data, sc_msg.len);
-	}
-	rpmsg_destroy_ept(&sc_ept);
-
-task_end:
-	LOG_INF("OpenAMP Linux sample client responder ended");
-}
-
-void app_rpmsg_tty(void *arg1, void *arg2, void *arg3)
-{
-	ARG_UNUSED(arg1);
-	ARG_UNUSED(arg2);
-	ARG_UNUSED(arg3);
-
-	unsigned char tx_buff[512];
-	int ret = 0;
-
-	k_sem_take(&data_tty_sem,  K_FOREVER);
-
-	LOG_INF("OpenAMP[remote] Linux TTY responder started");
-
-	tty_ept.priv = &tty_msg;
-	ret = rpmsg_create_ept(&tty_ept, rpdev, "rpmsg-tty",
-			       RPMSG_ADDR_ANY, RPMSG_ADDR_ANY,
-			       rpmsg_recv_tty_callback, NULL);
-	if (ret) {
-		LOG_ERR("[Linux TTY] Could not create endpoint: %d", ret);
-		goto task_end;
-	}
-	LOG_INF("[Linux TTY] OK to create endpoint");
-
-	while (tty_ept.addr !=  RPMSG_ADDR_ANY) {
-		k_sem_take(&data_tty_sem,  K_FOREVER);
-		if (tty_msg.len) {
-			LOG_INF("[Linux TTY] incoming msg: %.*s",
-				(int)tty_msg.len, (char *)tty_msg.data);
-			snprintf(tx_buff, 13, "TTY 0x%04x: ", tty_ept.addr);
-			memcpy(&tx_buff[12], tty_msg.data, tty_msg.len);
-			rpmsg_send(&tty_ept, tx_buff, tty_msg.len + 12);
-			rpmsg_release_rx_buffer(&tty_ept, tty_msg.data);
-		}
-		tty_msg.len = 0;
-		tty_msg.data = NULL;
-	}
-	rpmsg_destroy_ept(&tty_ept);
-
-task_end:
-	LOG_INF("OpenAMP Linux TTY responder ended");
-}
-
 void rpmsg_mng_task(void *arg1, void *arg2, void *arg3)
 {
 	ARG_UNUSED(arg1);
@@ -538,7 +380,7 @@ void rpmsg_mng_task(void *arg1, void *arg2, void *arg3)
 	unsigned int len;
 	int ret = 0;
 
-	LOG_INF("OpenAMP[remote] Linux responder demo started");
+	LOG_INF("OpenAMP[remote] Linux responder started");
 
 	/* Initialize platform */
 	ret = platform_init();
@@ -563,8 +405,6 @@ void rpmsg_mng_task(void *arg1, void *arg2, void *arg3)
 #endif
 
 	/* start the rpmsg clients */
-	k_sem_give(&data_sc_sem);
-	k_sem_give(&data_tty_sem);
 	k_sem_give(&data_linuxmsg_sem);
 	
 
@@ -575,7 +415,7 @@ void rpmsg_mng_task(void *arg1, void *arg2, void *arg3)
 task_end:
 	cleanup_system();
 
-	LOG_INF("OpenAMP demo ended");
+	LOG_INF("OpenAMP ended");
 }
 
 
@@ -585,7 +425,6 @@ void app_rpmsg_linuxmsg(void *arg1, void *arg2, void *arg3)
 	ARG_UNUSED(arg2);
 	ARG_UNUSED(arg3);
 
-	unsigned int msg_cnt = 0;
 	int ret = 0, k_sem_status;
 	uint64_t last_heartbeat_ts, current_ts;
 	pb_istream_t istream;
@@ -609,23 +448,13 @@ void app_rpmsg_linuxmsg(void *arg1, void *arg2, void *arg3)
 		k_sem_status = k_sem_take(&data_linuxmsg_sem,  K_MSEC(500));
 		if (k_sem_status == 0)
 		{
-			msg_cnt++;
-			LOG_INF("[Linux message client] ==> Incoming msg %d: %.d ", msg_cnt, linuxmsg_msg.len);
-			{
-				unsigned int i;
-				char *p = (char*)linuxmsg_msg.data;
+			LOG_INF("[Linux message client] ==> Incoming msg (size: %.d)", linuxmsg_msg.len);
 
-				for (i=0; i<linuxmsg_msg.len; i++)
-				{
-					LOG_INF("Message[%i] = %x",i, p[i]);
-				}
-
-			}
 			/* Protobuf decoding: 
-			   msg_buffer contains the encoded linux message (received from IPC/mailbox)
+			   linuxmsg_msg contains the encoded linux message (received from IPC/mailbox)
 			   rx_linuxmsg_msg contains the decoded linux message
-			*/ 
-			istream = pb_istream_from_buffer(msg_buffer, msg_buffer_len);
+			*/
+			istream = pb_istream_from_buffer((pb_byte_t *)linuxmsg_msg.data, linuxmsg_msg.len);
 			if (true == pb_decode(&istream, HighToLow_fields, &rx_linuxmsg_msg))
 			{
 				//Process incoming linux message
@@ -657,7 +486,7 @@ void app_rpmsg_linuxmsg(void *arg1, void *arg2, void *arg3)
 		{
            last_heartbeat_ts = current_ts;
  
- 		 	LOG_INF("[Linux message client] Send Heartbeat");
+ 		 	//LOG_INF("[Linux message client] Send Heartbeat");
  			//rpmsg_send(&linuxmsg_ept, sc_msg.data, sc_msg.len);
         }
 	
@@ -670,25 +499,18 @@ task_end:
 
 int main(void)
 {
-	LOG_INF("Starting application threads!");
+	LOG_INF("========== Zephyr - M4F firmware ti-am62x-m4-firmware V0.1 (04/02/2025) ==========");
 
-	//FLE:Adding
-	pMailboxHw = MAILBOX_REGBASE;
-	memset(MailboxHw_Msg_rcv, 0xFF, sizeof(MailboxHw_Msg_rcv));
-	u8HaltCPU = 0;
+	//FLE:Adding for debugging:--------------------------------------------------
+	//volatile unsigned int u8HaltCPU;
+	//pMailboxHw = MAILBOX_REGBASE;
+	//u8HaltCPU = 0;
 	//while (u8HaltCPU == 0);// For debugging: Used to halt the runtime execution
-	LOG_INF("ipm_handle: 0x%X",(unsigned int)ipm_handle);
-	//---------------------------
+	//---------------------------------------------------------------------------
 
 	k_thread_create(&thread_mng_data, thread_mng_stack, APP_TASK_STACK_SIZE,
 			rpmsg_mng_task,
 			NULL, NULL, NULL, K_PRIO_COOP(8), 0, K_NO_WAIT);
-	/*k_thread_create(&thread_rp__client_data, thread_rp__client_stack, APP_TASK_STACK_SIZE,
-			app_rpmsg_client_sample,
-			NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
-	k_thread_create(&thread_tty_data, thread_tty_stack, APP_TTY_TASK_STACK_SIZE,
-			app_rpmsg_tty,
-			NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);*/
 
 	k_thread_create(&thread_LinuxMsg_data, thread_LinuxMsg_stack, APP_TASK_STACK_SIZE,
 			app_rpmsg_linuxmsg,
