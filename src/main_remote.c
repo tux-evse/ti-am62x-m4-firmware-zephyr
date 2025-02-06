@@ -13,6 +13,9 @@
 |         |            |      | (use Mailbox driver & Integration of Protobuf   |
 |         |            |      | from freeRTOS).                                 |
 |---------|------------|------|-------------------------------------------------|
+|   0.2   | 05/02/2025 |  FLE | Adding the LED0 HEARTBEAT (Freq = 0.5 Hz).      |
+|         |            |      | Adding Relay control handle.                    |
+|---------|------------|------|-------------------------------------------------|
 
 */
 
@@ -26,6 +29,7 @@
 #include <string.h>
 
 #include <zephyr/drivers/ipm.h>
+#include <zephyr/drivers/gpio.h>
 
 #include <openamp/open_amp.h>
 #include <metal/sys.h>
@@ -98,6 +102,15 @@ static uint8_t msg_buffer[HighToLow_size];
 static struct rpmsg_rcv_msg linuxmsg_msg = {.data = (void*)&msg_buffer};
 static HighToLow rx_linuxmsg_msg;
 
+//LED0 HEARTBEAT
+#define LED0_HEARTBEAT_TIMING (1000) //One second
+#define LED0_NODE DT_ALIAS(led0) /* The devicetree node identifier */
+static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
+
+//RELAY CONTROL
+#define RELAY_CTL0_NODE DT_ALIAS(relayctl0) /* The devicetree node identifier */
+static const struct gpio_dt_spec relayctl = GPIO_DT_SPEC_GET(RELAY_CTL0_NODE, gpios);
+
 //FLE: For debugging: adding definition of mailbox registers-------------------------------
 #ifdef DEBUG_SW
 #define OMAP_MAILBOX_NUM_MSGS  16
@@ -167,7 +180,15 @@ void handle_incoming_message(const HighToLow* in) {
         }
     } else if (in->which_message == HighToLow_allow_power_on_tag) {
         bool intEnable = in->message.allow_power_on;
+		int ret;
+
         LOG_INF("power_on msg received, enable variable = %d",intEnable);
+		//Handle the relay control: GPIO0 Pin 14 (MCU_GPIO0_14 / MCU_MCAN0_RX)
+		ret = gpio_pin_set_dt(&relayctl, (int)intEnable );
+		if (ret != 0)
+		{
+			LOG_ERR("GPIO gpio_pin_set_dt relayctl failed");
+		}
     } else if (in->which_message == HighToLow_enable_tag) {
         LOG_INF("Received a enable Tag from CPU");
     } else if (in->which_message == HighToLow_disable_tag) {
@@ -426,7 +447,7 @@ void app_rpmsg_linuxmsg(void *arg1, void *arg2, void *arg3)
 	ARG_UNUSED(arg3);
 
 	int ret = 0, k_sem_status;
-	uint64_t last_heartbeat_ts, current_ts;
+	uint64_t last_toggleled0_ts, last_heartbeat_ts, current_ts;
 	pb_istream_t istream;
 
 	k_sem_take(&data_linuxmsg_sem,  K_FOREVER);
@@ -442,7 +463,7 @@ void app_rpmsg_linuxmsg(void *arg1, void *arg2, void *arg3)
 	}
 	LOG_INF("[Linux message client] OK to create endpoint");
 
-	last_heartbeat_ts = sys_clock_tick_get();
+	last_toggleled0_ts = last_heartbeat_ts = sys_clock_tick_get();
 	while (1) {
 		//k_sem_take(&data_linuxmsg_sem,  K_FOREVER);
 		k_sem_status = k_sem_take(&data_linuxmsg_sem,  K_MSEC(500));
@@ -482,6 +503,22 @@ void app_rpmsg_linuxmsg(void *arg1, void *arg2, void *arg3)
 
 		current_ts = sys_clock_tick_get();
 
+
+		//LED0 HEARTBEAT
+		if (k_ms_to_ticks_floor64((uint64_t)(LED0_HEARTBEAT_TIMING)) < (current_ts - last_toggleled0_ts)) 
+		{
+			int ret;
+
+			last_toggleled0_ts = current_ts;
+
+			ret = gpio_pin_toggle_dt(&led);
+			if (ret < 0) 
+			{
+				LOG_WRN("GPIO gpio_pin_toggle_dt led failed");
+			}
+		}
+
+		//Send Heartbeat to linux
         if (k_ms_to_ticks_floor64((uint64_t)(3000)) < (current_ts - last_heartbeat_ts)) 
 		{
            last_heartbeat_ts = current_ts;
@@ -497,9 +534,111 @@ task_end:
 	LOG_INF("OpenAMP[remote] Linux message responder ended");
 }
 
+//LED0 HEARTBEAT initialization
+bool init_led0(void)
+{
+	int ret;
+
+	LOG_INF("Start led0 init");
+
+	if (!gpio_is_ready_dt(&led)) 
+	{
+		LOG_WRN("GPIO led is not ready");
+		return false;
+	}
+	else 
+	{
+		LOG_INF("GPIO led is ready");
+	}
+
+	ret = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
+	if (ret < 0) 
+	{
+	 	LOG_WRN("GPIO gpio_pin_configure_dt led failed");
+		return false;
+	}
+	else 
+	{
+		LOG_INF("GPIO gpio_pin_configure_dt led success");
+	}
+
+	return true;
+}
+
+//RELAY CONTROL initalization
+bool init_relayctl(void)
+{
+	int ret;
+
+	if (!gpio_is_ready_dt(&relayctl)) 
+	{
+		LOG_WRN("GPIO relayctl is not ready");
+		return false;
+	}
+	else 
+	{
+		LOG_INF("GPIO relayctl is ready");
+	}
+
+	ret = gpio_pin_configure_dt(&relayctl, GPIO_OUTPUT_ACTIVE);
+	if (ret < 0) 
+	{
+	 	LOG_WRN("GPIO gpio_pin_configure_dt relayctl failed");
+		return false;
+	}
+	else 
+	{
+		LOG_INF("GPIO gpio_pin_configure_dt relayctl success");
+	}
+
+	ret = gpio_pin_set_dt(&relayctl, 0); //Open Relay control
+	if (ret != 0)
+	{
+		LOG_WRN("GPIO gpio_pin_set_dt relayctl failed");
+		return false;
+	}
+	else 
+	{
+		LOG_INF("GPIO gpio_pin_set_dt relayctl success");
+	}
+
+	return true;
+}
+
+
+// Hardware Initialization
+bool init_hw(void)
+{
+
+	// SOM LED
+	if(!init_led0()) 
+	{
+		LOG_WRN("init_led0 failed");
+		return false;
+	}
+	else 
+	{
+		LOG_INF("init_led0 success");
+	}
+
+	// RELAY CONTROL
+	if(!init_relayctl()) 
+	{
+		LOG_WRN("init_relayctl failed");
+		return false;
+	}
+	else 
+	{
+		LOG_INF("init_relayctl success");
+	}
+
+ return true;
+}
+
+
 int main(void)
 {
-	LOG_INF("========== Zephyr - M4F firmware ti-am62x-m4-firmware V0.1 (04/02/2025) ==========");
+	LOG_INF("========== Zephyr - M4F firmware ti-am62x-m4-firmware V0.2 (05/02/2025) ==========");
 
 	//FLE:Adding for debugging:--------------------------------------------------
 	//volatile unsigned int u8HaltCPU;
@@ -508,6 +647,18 @@ int main(void)
 	//while (u8HaltCPU == 0);// For debugging: Used to halt the runtime execution
 	//---------------------------------------------------------------------------
 
+	//Hardware Init
+	if (false == init_hw())
+	{//Hardware initialization failure
+	    LOG_ERR("Hardware initialization failed");
+		return 0;
+	}
+	else
+	{
+		LOG_INF("Hardware initialization successful");
+	}
+	
+	//Start Openamp
 	k_thread_create(&thread_mng_data, thread_mng_stack, APP_TASK_STACK_SIZE,
 			rpmsg_mng_task,
 			NULL, NULL, NULL, K_PRIO_COOP(8), 0, K_NO_WAIT);

@@ -1,0 +1,28 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/ {
+    aliases {
+        relayctl0 = &relay_ctl0;
+    };
+    gpio_relay {
+        compatible = "gpio-leds";
+        relay_ctl0: relay_ctrl_0 {
+            gpios = <&gpio0 14 GPIO_ACTIVE_HIGH>;
+            label = "Relay control 0";
+        };
+    };
+};
+
+&pinctrl {
+	mcu_gpio0_relay_ctl_default: mcu_gpio0_relay_ctl_default {
+		pinmux = <K3_PINMUX(0x0038, PIN_OUTPUT, MUX_MODE_7)>;
+	};
+};
+
+&gpio0 {
+	pinctrl-0 = <&mcu_gpio0_led_default &mcu_gpio0_relay_ctl_default>;
+	pinctrl-names = "default";
+	status = "okay";
+};
