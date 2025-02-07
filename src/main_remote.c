@@ -16,10 +16,11 @@
 |   0.2   | 05/02/2025 |  FLE | Adding the LED0 HEARTBEAT (Freq = 0.5 Hz).      |
 |         |            |      | Adding Relay control handle.                    |
 |---------|------------|------|-------------------------------------------------|
+|   0.3   | 10/02/2025 |   AA | Use IPM API's instead of MBOX                   |
+|         |            |      | Config IPM to MBOX passthrough driver           |
+|---------|------------|------|-------------------------------------------------|
 
 */
-
-
 
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
@@ -46,9 +47,6 @@ LOG_MODULE_REGISTER(ti_am62x_m4_firmware, LOG_LEVEL_DBG);
 //FLE adding:
 #include "pb_codec/nanopb/pb_decode.h"
 #include "pb_codec/high_to_low.pb.h"
-#include <zephyr/drivers/mbox.h>
-#define CHANNEL_A53_TO_M4F (1) // channel = MailBox1 for A53 -> M4F
-#define CHANNEL_M4F_TO_A53 (0) // channel = MailBox0 for M4F -> A53
 //------------
 
 #define SHM_DEVICE_NAME	"shm"
@@ -110,37 +108,6 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 //RELAY CONTROL
 #define RELAY_CTL0_NODE DT_ALIAS(relayctl0) /* The devicetree node identifier */
 static const struct gpio_dt_spec relayctl = GPIO_DT_SPEC_GET(RELAY_CTL0_NODE, gpios);
-
-//FLE: For debugging: adding definition of mailbox registers-------------------------------
-#ifdef DEBUG_SW
-#define OMAP_MAILBOX_NUM_MSGS  16
-#define MAILBOX_MAX_CHANNELS   16
-#define OMAP_MAILBOX_NUM_USERS 4
-#define MAILBOX_MBOX_SIZE      sizeof(uint32_t)
-
-#define MAILBOX_REGBASE (struct sMailboxHw *)0xA9000000
-
-struct omap_mailbox_irq_regs {
-	uint32_t status_raw;
-	uint32_t status_clear;
-	uint32_t enable_set;
-	uint32_t enable_clear;
-};
-
-struct sMailboxHw {
-	uint32_t revision;
-	uint32_t __pad0[3];
-	uint32_t sysconfig;
-	uint32_t __pad1[11];
-	uint32_t message[OMAP_MAILBOX_NUM_MSGS];
-	uint32_t fifo_status[OMAP_MAILBOX_NUM_MSGS];
-	uint32_t msg_status[OMAP_MAILBOX_NUM_MSGS];
-	struct omap_mailbox_irq_regs irq_regs[OMAP_MAILBOX_NUM_USERS];
-};
-
-volatile struct sMailboxHw *pMailboxHw; //For debugging: Map structure on Mailbox registers
-#endif
-//-----------------------------------------------------------------------------------------
 
 //FLE: Exemple to handle incoming linux message--------------------------------------------
 
@@ -219,16 +186,10 @@ void handle_incoming_message(const HighToLow* in) {
 }
 //-----------------------------------------------------------------------------------------
 
-/*static void platform_ipm_callback(const struct device *dev, void *context,
+static void platform_ipm_callback(const struct device *dev, void *context,
 				  uint32_t id, volatile void *data)
 {
 	LOG_DBG("%s: msg received from mb %d", __func__, id);
-	k_sem_give(&data_sem);
-}*/
-
-static void mbox_callback(const struct device *dev, uint32_t channel,
-		     void *user_data, struct mbox_msg *data)
-{
 	k_sem_give(&data_sem);
 }
 
@@ -269,8 +230,7 @@ int mailbox_notify(void *priv, uint32_t id)
 	ARG_UNUSED(priv);
 
 	LOG_DBG("%s: msg received", __func__);
-	//ipm_send(ipm_handle, 0, id, NULL, 0); FLE
-	mbox_send(ipm_handle, CHANNEL_M4F_TO_A53, NULL); //FLE
+	ipm_send(ipm_handle, 0, id, NULL, 0);
 
 	return 0;
 }
@@ -306,29 +266,21 @@ int platform_init(void)
 	}
 	LOG_INF("IPM device is OK ready");
 
-	//ipm_register_callback(ipm_handle, platform_ipm_callback, NULL); FLE
-	if (mbox_register_callback(ipm_handle, CHANNEL_A53_TO_M4F, mbox_callback, NULL) != 0) //FLE
-	{
-		LOG_ERR("mbox_register_callback failed");
-	}
-	
-	LOG_DBG("mbox_register_callback OK");
+	ipm_register_callback(ipm_handle, platform_ipm_callback, NULL);
 
-	//status = ipm_set_enabled(ipm_handle, 1); FLE
-	status = mbox_set_enabled(ipm_handle, CHANNEL_A53_TO_M4F, true); //FLE
+	status = ipm_set_enabled(ipm_handle, 1);
 	if (status) {
-		LOG_ERR("mbox_set_enabled failed");
+		LOG_ERR("ipm_set_enabled failed");
 		return -1;
 	}
-	LOG_INF("mbox_set_enabled OK");
+	LOG_INF("ipm_set_enabled OK");
 
 	return 0;
 }
 
 static void cleanup_system(void)
 {
-	//ipm_set_enabled(ipm_handle, 0); FLE
-	mbox_set_enabled(ipm_handle, CHANNEL_A53_TO_M4F, false); //FLE
+	ipm_set_enabled(ipm_handle, 0);
 	rpmsg_deinit_vdev(&rvdev);
 	metal_finish();
 }
@@ -638,7 +590,7 @@ bool init_hw(void)
 
 int main(void)
 {
-	LOG_INF("========== Zephyr - M4F firmware ti-am62x-m4-firmware V0.2 (05/02/2025) ==========");
+	LOG_INF("========== Zephyr - M4F firmware ti-am62x-m4-firmware V0.3 (10/02/2025) ==========");
 
 	//FLE:Adding for debugging:--------------------------------------------------
 	//volatile unsigned int u8HaltCPU;

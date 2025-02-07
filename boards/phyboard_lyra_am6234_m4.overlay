@@ -7,8 +7,8 @@
         /*
          * shared memory reserved for the inter-processor communication
          */
-        zephyr,ipc_shm = &mcu_m4fss_dma_memory_region; /* FLE:  IPC (Virtio/Vring buffers) */
-        zephyr,ipc = &mbox0; /* FLE:  IPC HW mailbox */
+        zephyr,ipc_shm = &shram; /* FLE:  IPC (Virtio/Vring buffers) */
+        zephyr,ipc = &ipc0; /* FLE:  IPC HW mailbox */
     };
 
     aliases {
@@ -21,18 +21,19 @@
         ranges;
 
         /* FLE:  IPC (Virtio/Vring buffers) Size = 1 Mo */
-        mcu_m4fss_dma_memory_region: memory@9cb00000 {
+        /* Linux mcu_m4fss_dma_memory_region */
+        shram: memory@9cb00000 {
             compatible = "shared-dma-pool";
             reg = <0x9cb00000 0x100000>;
-            no-map;
         };
     };
 
-    /* FLE:  Mailbox Rx/Tx channel */
-    mbox-consumer {
-        compatible = "vnd,mbox-consumer";
+    /* aaillet test */
+    ipc0: ipc {
+        compatible = "zephyr,mbox-ipm";
         mboxes = <&mbox0 0>, <&mbox0 1>;
         mbox-names = "tx", "rx";
+        status = "okay";
     };
 
     gpio_relay {
