@@ -3,9 +3,38 @@
  */
 
 / {
+    chosen {
+        /*
+         * shared memory reserved for the inter-processor communication
+         */
+        zephyr,ipc_shm = &mcu_m4fss_dma_memory_region; /* FLE:  IPC (Virtio/Vring buffers) */
+        zephyr,ipc = &mbox0; /* FLE:  IPC HW mailbox */
+    };
+
     aliases {
         relayctl0 = &relay_ctl0;
     };
+
+    reserved-memory {
+        #address-cells = <1>;
+        #size-cells = <1>;
+        ranges;
+
+        /* FLE:  IPC (Virtio/Vring buffers) Size = 1 Mo */
+        mcu_m4fss_dma_memory_region: memory@9cb00000 {
+            compatible = "shared-dma-pool";
+            reg = <0x9cb00000 0x100000>;
+            no-map;
+        };
+    };
+
+    /* FLE:  Mailbox Rx/Tx channel */
+    mbox-consumer {
+        compatible = "vnd,mbox-consumer";
+        mboxes = <&mbox0 0>, <&mbox0 1>;
+        mbox-names = "tx", "rx";
+    };
+
     gpio_relay {
         compatible = "gpio-leds";
         relay_ctl0: relay_ctrl_0 {
@@ -16,13 +45,16 @@
 };
 
 &pinctrl {
-	mcu_gpio0_relay_ctl_default: mcu_gpio0_relay_ctl_default {
-		pinmux = <K3_PINMUX(0x0038, PIN_OUTPUT, MUX_MODE_7)>;
-	};
+    mcu_gpio0_relay_ctl_default: mcu_gpio0_relay_ctl_default {
+        pinmux = <K3_PINMUX(0x0038, PIN_OUTPUT, MUX_MODE_7)>;
+    };
 };
 
 &gpio0 {
-	pinctrl-0 = <&mcu_gpio0_led_default &mcu_gpio0_relay_ctl_default>;
-	pinctrl-names = "default";
-	status = "okay";
+    pinctrl-0 = <&mcu_gpio0_led_default &mcu_gpio0_relay_ctl_default>;
+    pinctrl-names = "default";
+};
+
+&mbox0 {
+    status = "okay";
 };
