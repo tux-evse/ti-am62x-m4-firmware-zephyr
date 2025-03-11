@@ -1,6 +1,7 @@
 /*
  * SPDX-License-Identifier: Apache-2.0
  */
+#include <zephyr/dt-bindings/pwm/pwm.h>
 
 / {
     chosen {
@@ -13,6 +14,7 @@
 
     aliases {
         relayctl0 = &relay_ctl0;
+        pilotpwm0 = &pilot_pwm0;
     };
 
     reserved-memory {
@@ -43,17 +45,38 @@
             label = "Relay control 0";
         };
     };
+
+    pilotpwm {
+		compatible = "pwm-leds";
+		status = "okay";
+        
+		pilot_pwm0: pilot_pwm_0 {
+			pwms = <&mcu_timer2_pwm0 0 PWM_HZ(1000) PWM_POLARITY_NORMAL>;
+			label = "Pilot PWM";
+		};
+	};
 };
 
+/* Port configuration */
 &pinctrl {
     mcu_gpio0_relay_ctl_default: mcu_gpio0_relay_ctl_default {
         pinmux = <K3_PINMUX(0x0038, PIN_OUTPUT, MUX_MODE_7)>;
+    };
+
+    pwm0_default: pwm0_default {
+        pinmux = <K3_PINMUX(0x003C, PIN_OUTPUT, MUX_MODE_1)>;
     };
 };
 
 &gpio0 {
     pinctrl-0 = <&mcu_gpio0_led_default &mcu_gpio0_relay_ctl_default>;
     pinctrl-names = "default";
+};
+
+&mcu_timer2_pwm0 {
+	status = "okay";
+	pinctrl-0 = <&pwm0_default>;
+	pinctrl-names = "default";
 };
 
 &mbox0 {

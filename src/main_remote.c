@@ -19,6 +19,8 @@
 |   0.3   | 10/02/2025 |   AA | Use IPM API's instead of MBOX                   |
 |         |            |      | Config IPM to MBOX passthrough driver           |
 |---------|------------|------|-------------------------------------------------|
+|   0.4   | 24/02/2025 |  FLE | Adding Pilot PWM management                     |
+|---------|------------|------|-------------------------------------------------|
 
 */
 
@@ -31,6 +33,7 @@
 
 #include <zephyr/drivers/ipm.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/pwm.h>
 
 #include <openamp/open_amp.h>
 #include <metal/sys.h>
@@ -44,10 +47,8 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(ti_am62x_m4_firmware, LOG_LEVEL_DBG);
 
-//FLE adding:
 #include "pb_codec/nanopb/pb_decode.h"
 #include "pb_codec/high_to_low.pb.h"
-//------------
 
 #define SHM_DEVICE_NAME	"shm"
 
@@ -60,8 +61,13 @@ LOG_MODULE_REGISTER(ti_am62x_m4_firmware, LOG_LEVEL_DBG);
 #define SHM_START_ADDR	DT_REG_ADDR(SHM_NODE)
 #define SHM_SIZE		DT_REG_SIZE(SHM_NODE)
 
+/* Stack size for Application tasks */
 #define APP_TASK_STACK_SIZE (1024)
 
+/* Declare prototype of functions */
+bool pilotpwm_set_dutycycle(float duty_cycle);
+
+/* Declare the objects */
 K_THREAD_STACK_DEFINE(thread_mng_stack, APP_TASK_STACK_SIZE);
 K_THREAD_STACK_DEFINE(thread_LinuxMsg_stack, APP_TASK_STACK_SIZE);
 
@@ -109,7 +115,11 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 #define RELAY_CTL0_NODE DT_ALIAS(relayctl0) /* The devicetree node identifier */
 static const struct gpio_dt_spec relayctl = GPIO_DT_SPEC_GET(RELAY_CTL0_NODE, gpios);
 
-//FLE: Exemple to handle incoming linux message--------------------------------------------
+//PILOT PWM
+#define PILOT_PW0_NODE DT_ALIAS(pilotpwm0) /* The devicetree node identifier */
+static const struct pwm_dt_spec pilotpwm = PWM_DT_SPEC_GET(PILOT_PW0_NODE);
+
+//Example to handle incoming linux message--------------------------------------------
 
 /* Field tags (for use in manual encoding/decoding) */
 #define SetPWM_state_tag                         1
@@ -131,12 +141,15 @@ void handle_incoming_message(const HighToLow* in) {
         switch (set_pwm.state) {
         case PWMState_F:
             LOG_INF("MODE PWMState_F");
+			pilotpwm_set_dutycycle(0.0F);
             break;
         case PWMState_OFF:
             LOG_INF("MODE PWMState_OFF");
+			pilotpwm_set_dutycycle(1.0F);
             break;
         case PWMState_ON:
             LOG_INF("MODE PWMState_ON [pwm msg received %f]", (double)set_pwm.duty_cycle);
+			pilotpwm_set_dutycycle(set_pwm.duty_cycle);
             break;
         default:
             // NOT ALLOWED
@@ -452,9 +465,7 @@ void app_rpmsg_linuxmsg(void *arg1, void *arg2, void *arg3)
 			LOG_INF("[Linux message client] Semaphore ???");
 		}
 
-
 		current_ts = sys_clock_tick_get();
-
 
 		//LED0 HEARTBEAT
 		if (k_ms_to_ticks_floor64((uint64_t)(LED0_HEARTBEAT_TIMING)) < (current_ts - last_toggleled0_ts)) 
@@ -487,7 +498,7 @@ task_end:
 }
 
 //LED0 HEARTBEAT initialization
-bool init_led0(void)
+bool led0_init(void)
 {
 	int ret;
 
@@ -518,7 +529,7 @@ bool init_led0(void)
 }
 
 //RELAY CONTROL initalization
-bool init_relayctl(void)
+bool relayctl_init(void)
 {
 	int ret;
 
@@ -557,42 +568,120 @@ bool init_relayctl(void)
 	return true;
 }
 
-
-// Hardware Initialization
-bool init_hw(void)
+//PILOT PWM set duty cycle
+bool pilotpwm_set_dutycycle(float duty_cycle)
 {
+	uint32_t pulse;
+	int ret;
 
-	// SOM LED
-	if(!init_led0()) 
+	if (duty_cycle < 0.0F) 
 	{
-		LOG_WRN("init_led0 failed");
+        duty_cycle = 0.0F;
+		LOG_WRN("Pilot PWM Negative duty cycle => Set duty cycle to 0%%");
+    }
+	else if (duty_cycle > 1.0F) 
+	{
+        duty_cycle = 1.0F;
+		LOG_WRN("Pilot PWM Duty cycle exceeds 100%% => Set duty cycle to 0%%");
+    }
+
+	if (duty_cycle == 0.0F)
+	{
+		pulse = 0;
+	}
+	else if (duty_cycle == 1.0F)
+	{
+		pulse = pilotpwm.period;
+	}
+	else
+	{
+		pulse = pilotpwm.period * duty_cycle;
+	}
+
+	// Pulse width set to the PILOT PWM
+	LOG_INF("Pilot PWM Set duty cycle = %d%%", (uint8_t)(100 * duty_cycle));
+	ret = pwm_set_pulse_dt(&pilotpwm, pulse);
+
+	if (ret != 0)
+	{
+		LOG_WRN("Pilot PWM pwm_set_pulse_dt pilotpwm failed");
+		return false;
+	}
+	else
+	{
+		LOG_INF("Pilot PWM pwm_set_pulse_dt pilotpwm success");
+	}
+
+	return true;
+}
+
+//PILOT PWM initalization
+bool pilotpwm_init(void)
+{
+	if (!pwm_is_ready_dt(&pilotpwm))
+	{
+		LOG_WRN("Pilot PWM is not ready");
 		return false;
 	}
 	else 
 	{
-		LOG_INF("init_led0 success");
+		LOG_INF("Pilot PWM is ready");
+	}
+
+	// Set 5% for default duty cycle
+	if (!pilotpwm_set_dutycycle(0.05F))
+	{
+		return false;
+	}
+
+	return true;	
+}
+
+// Hardware Initialization
+bool hw_init(void)
+{
+	// SOM LED
+	if(!led0_init()) 
+	{
+		LOG_WRN("led0_init failed");
+		return false;
+	}
+	else 
+	{
+		LOG_INF("led0_init success");
 	}
 
 	// RELAY CONTROL
-	if(!init_relayctl()) 
+	if(!relayctl_init()) 
 	{
-		LOG_WRN("init_relayctl failed");
+		LOG_WRN("relayctl_init failed");
 		return false;
 	}
 	else 
 	{
-		LOG_INF("init_relayctl success");
+		LOG_INF("relayctl_init success");
 	}
 
- return true;
+	//PILOT PWM 
+	if(!pilotpwm_init()) 
+	{
+		LOG_WRN("pilotpwm_init failed");
+		return false;
+	}
+	else 
+	{
+		LOG_INF("pilotpwm_init success");
+	}
+
+ 	return true;
 }
 
 
 int main(void)
 {
-	LOG_INF("========== Zephyr - M4F firmware ti-am62x-m4-firmware V0.3 (10/02/2025) ==========");
+	LOG_INF("========== Zephyr - M4F firmware ti-am62x-m4-firmware V0.4 (24/02/2025) ==========");
 
-	//FLE:Adding for debugging:--------------------------------------------------
+	//For debugging:--------------------------------------------------
 	//volatile unsigned int u8HaltCPU;
 	//pMailboxHw = MAILBOX_REGBASE;
 	//u8HaltCPU = 0;
@@ -600,7 +689,7 @@ int main(void)
 	//---------------------------------------------------------------------------
 
 	//Hardware Init
-	if (false == init_hw())
+	if (false == hw_init())
 	{//Hardware initialization failure
 	    LOG_ERR("Hardware initialization failed");
 		return 0;
