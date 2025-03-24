@@ -118,6 +118,10 @@ The folders and files structure is as shown below:
   │       ├── boards/
   │       │   ├── phyboard_lyra_am6234_m4.conf
   │       │   └── phyboard_lyra_am6234_m4.overlay
+  │       ├── dts/
+  │       │   └── bindings/
+  │       │       ├── gpio-relayctrl.yaml
+  │       │       └── pwm-ctrlpilot.yaml
   │       └── build/
   │       │   ├── zephyr/
   │       │   │   ├── am62-mcu-m4f0_0-fw.elf       # M4F firmware binary
@@ -167,6 +171,14 @@ This folder contains the specific files to the Phytec AM62x board V2:
 `phyboard_lyra_am6234_m4.conf` is the board-specific configuration file to enable the Inter-Processor Mailbox (IPM) and mailbox driver.
 
 `phyboard_lyra_am6234_m4.overlay` is the Device Tree Overlay file  for adding or modifying the Device Tree nodes  without changing the main Device Tree.
+<br><br>
+#### `dts\bindings` folder
+
+This folder contains the custom device tree bindings:
+
+`gpio-relayctrl.yaml` is the custom GPIO-controlled binding for Relay Control.
+
+`pwm-ctrlpilot.yaml` is the custom PWM-based binding for the Control Pilot signal.
 <br><br>
 #### `build` folder
 
