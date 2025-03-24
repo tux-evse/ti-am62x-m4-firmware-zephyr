@@ -1,0 +1,18 @@
+# Copyright (c) 2025, Valeo
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  This allows to define the Relay Control controlled by a GPIO.
+
+compatible: "gpio-relayctrl"
+
+child-binding:
+  description: GPIO Relay Control child node
+  properties:
+    gpios:
+      type: phandle-array
+      required: true
+    label:
+      type: string
+      description: |
+        Human readable string describing the Relay Control.

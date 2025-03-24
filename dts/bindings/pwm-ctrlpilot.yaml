@@ -1,0 +1,24 @@
+# Copyright (c) 2025, Valeo
+# SPDX-License-Identifier: Apache-2.0
+
+description: PWM Control Pilot parent node
+
+compatible: "pwm-ctrlpilot"
+
+child-binding:
+  description: PWM Control Pilot child node
+  properties:
+    pwms:
+      required: true
+      type: phandle-array
+      description: |
+        Reference to a PWM instance.
+
+        The channel field is not applicable for the hardware AM62x timer cell (Set to 0).
+        The period field defines the PWM signal frequency (1 kHz).
+        The flags field defines the normal polarity (high-active pulse).
+
+    label:
+      type: string
+      description: |
+        Human readable string describing the Control Pilot.

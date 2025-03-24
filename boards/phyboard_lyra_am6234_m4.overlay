@@ -39,7 +39,7 @@
     };
 
     gpio_relay {
-        compatible = "gpio-leds";
+        compatible = "gpio-relayctrl";
         relay_ctl0: relay_ctrl_0 {
             gpios = <&gpio0 14 GPIO_ACTIVE_HIGH>;
             label = "Relay control 0";
@@ -47,7 +47,7 @@
     };
 
     pilotpwm {
-		compatible = "pwm-leds";
+		compatible = "pwm-ctrlpilot";
 		status = "okay";
         
 		pilot_pwm0: pilot_pwm_0 {
